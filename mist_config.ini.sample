@@ -1,0 +1,23 @@
+[mist]
+# Mist API Configuration
+# Get your API token from: https://manage.mist.com → Organization → API Tokens
+api_token = your_mist_api_token_here
+
+# Your Mist organization ID (found in the portal URL after 'org_id=')
+# Example: If URL is https://manage.mist.com/admin/?org_id=12345678-1234-1234-1234-123456789abc
+# Then your org_id is: 12345678-1234-1234-1234-123456789abc
+org_id = your_organization_id_here
+
+# Mist API base URL (region-specific)
+# US (default): https://api.mist.com
+# EU: https://api.eu.mist.com  
+# APAC: https://api.ac2.mist.com
+# Other regions: Check Mist documentation
+base_url = https://api.mist.com
+
+# Default report theme
+# Options: default, sunset, ocean, forest, dark, corporate
+theme = default
+
+# Default number of days to analyze for NAC client data
+days = 7

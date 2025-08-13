@@ -1,0 +1,67 @@
+[telegram]
+# Telegram Bot Configuration
+# 1. Create a bot by messaging @BotFather on Telegram
+# 2. Send /newbot and follow the prompts
+# 3. Copy the bot token below
+bot_token = YOUR_BOT_TOKEN_HERE
+
+# Your Telegram chat ID
+# Get this by messaging @userinfobot on Telegram
+# Or message your bot and visit: https://api.telegram.org/bot<BOT_TOKEN>/getUpdates
+chat_id = YOUR_CHAT_ID_HERE
+
+# Notification preferences (true/false)
+send_success_reports = true
+send_error_alerts = true
+send_change_alerts = true
+
+[mist]
+# Path to the main Mist endpoint report script
+script_path = ./mist_endpoint_report.py
+
+# Path to the Mist API configuration file
+# This can be plaintext or encrypted (.enc extension)
+config_path = Resources/mist_config.ini
+
+# Output formats for reports (comma-separated)
+# Options: html, csv, json, excel
+output_formats = html,csv
+
+# Default report theme
+# Options: default, sunset, ocean, forest, dark, corporate
+theme = default
+
+[reports]
+# Directory where reports are stored
+directory = Reports
+
+# How many days to keep old report files
+keep_days = 30
+
+[database]
+# SQLite database path for historical tracking
+# Will be placed in Resources/ directory
+path = mist_history.db
+
+# How many days to keep database records
+keep_days = 90
+
+[scheduling]
+# Enable/disable scheduled automation (true/false)
+enabled = true
+
+# Time to run daily reports (24-hour format)
+daily_time = 06:00
+
+# Time to run daily cleanup (24-hour format)
+cleanup_time = 02:00
+
+[health]
+# Maximum acceptable report generation time in seconds
+max_duration_seconds = 60
+
+# Send alerts when reports fail (true/false)
+alert_on_failure = true
+
+# Send alerts when reports take too long (true/false)
+alert_on_slow_runs = true
