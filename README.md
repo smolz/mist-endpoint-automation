@@ -1,10 +1,11 @@
 # Mist Automation Project
 
-A comprehensive automation system for generating Mist endpoint reports with Telegram notifications, configuration encryption, and advanced scheduling capabilities.
+A comprehensive automation system for generating Mist endpoint reports with IP address tracking, Telegram notifications, configuration encryption, and advanced scheduling capabilities.
 
 ## Features
 
-- **Enhanced Endpoint Reporting**: Pull User MACs and NAC Clients data from Mist API
+- **Enhanced Endpoint Reporting**: Pull User MACs and NAC Clients data from Mist API with IP address tracking
+- **IP Address Visibility**: Track last known IP addresses for network troubleshooting and analysis
 - **Multiple Output Formats**: HTML, CSV, JSON, and Excel reports with customizable themes
 - **Configuration Encryption**: Secure storage of API tokens and sensitive configuration
 - **Telegram Notifications**: Automated notifications for report success, failures, and changes
@@ -12,7 +13,7 @@ A comprehensive automation system for generating Mist endpoint reports with Tele
 - **Configurable Python Execution**: Support for multiple Python versions and environments
 - **Scheduling Support**: Built-in scheduling for automated report generation
 - **Advanced Filtering**: Filter reports by site, connection type, and date ranges
-- **Interactive HTML Reports**: Sortable tables with statistics dashboard and real-time filtering
+- **Interactive HTML Reports**: Sortable tables with statistics dashboard, real-time filtering, and IP address coverage
 
 ## Requirements
 
@@ -26,7 +27,7 @@ pip3 install requests pandas openpyxl configparser cryptography python-telegram-
 
 ```
 ├── mist_automation.py          # Main automation wrapper with Telegram notifications
-├── mist_endpoint_report.py     # Core Mist API report generator
+├── mist_endpoint_report.py     # Core Mist API report generator with IP address support
 ├── config_encryption.py       # Configuration file encryption module
 ├── Resources/                  # Configuration and encrypted files
 │   ├── mist_config.ini.enc    # Encrypted Mist API configuration
@@ -83,7 +84,7 @@ python3 mist_automation.py --run
 ### Basic Report Generation
 
 ```bash
-# Generate report with default settings
+# Generate report with default settings (includes IP addresses)
 python3 mist_endpoint_report.py
 
 # Generate report with command line options
@@ -210,21 +211,31 @@ Available themes for HTML reports:
 
 ## Output Formats
 
-- **HTML**: Interactive web report with sorting, filtering, and statistics
-- **CSV**: Raw data for spreadsheet analysis
-- **JSON**: Structured data with metadata and statistics
-- **Excel**: Multi-sheet workbook with data and breakdowns
+- **HTML**: Interactive web report with sorting, filtering, IP address tracking, and statistics
+- **CSV**: Raw data for spreadsheet analysis including IP addresses
+- **JSON**: Structured data with metadata, statistics, and IP address information
+- **Excel**: Multi-sheet workbook with data, breakdowns, and IP address coverage metrics
 
-## Enhanced HTML Features
+## Enhanced HTML Features with IP Address Support
 
 The HTML reports now include:
 
-- **Real-time search filtering**: Find devices instantly
-- **Quick filter buttons**: "Show Never Seen", "Show All"
-- **Filter statistics**: Shows "X of Y endpoints" 
-- **Enhanced CSV download**: Exports only filtered results
-- **Material Design Icons**: Professional network-specific icons
-- **Performance info section**: Detailed statistics and breakdowns
+- **Real-time search filtering**: Find devices instantly by any field including IP address
+- **Quick filter buttons**: "Show Never Seen", "Show With IP", "Show All"
+- **IP address tracking**: Last known IP address for each device with special formatting
+- **Enhanced statistics**: IP address coverage percentage and device counts
+- **Filter statistics**: Shows "X of Y endpoints" with IP coverage info
+- **Enhanced CSV download**: Exports only filtered results with IP data
+- **Material Design Icons**: Professional network-specific icons including IP indicators
+- **Performance info section**: Detailed statistics, breakdowns, and IP address insights
+
+### New IP Address Features
+
+- **🌐 IP Address Column**: Shows last known IP address for each device
+- **IP Address Filtering**: "Show With IP" button to view only devices with IP data
+- **Smart IP Sorting**: Intelligent numeric sorting for IP addresses
+- **Coverage Statistics**: Track percentage of devices with IP address data
+- **Network Troubleshooting**: Correlate devices with their network assignments
 
 ## Security Features
 
@@ -259,15 +270,15 @@ The project supports two encryption methods:
 
 ### Notification Types
 
-- **Success Reports**: Statistics and completion notifications
+- **Success Reports**: Statistics, IP address coverage, and completion notifications
 - **Error Alerts**: Failure notifications with details
-- **Change Alerts**: Significant changes in endpoint counts
+- **Change Alerts**: Significant changes in endpoint counts or IP assignments
 
 ## Database Schema
 
 The SQLite database tracks:
 
-- **reports**: Report metadata, statistics, and success status
+- **reports**: Report metadata, statistics, IP address coverage, and success status
 - **health_log**: System health and performance metrics
 
 ## Error Handling
@@ -328,6 +339,11 @@ The system includes built-in rate limiting:
 - Verify site filters are correct
 - Ensure NAC is enabled in Mist configuration
 
+**IP Address Issues**
+- IP addresses come from NAC clients data - devices must have connected to appear
+- Increase lookback period with `--days` for more IP address coverage
+- Check that devices are actually authenticating through NAC
+
 ### Logs
 
 Check application logs for detailed error information:
@@ -350,6 +366,17 @@ For issues and questions:
 
 ## Changelog
 
+### Version 2.2 - IP Address Support
+- **NEW**: Added IP address tracking and reporting from NAC clients data
+- **NEW**: Enhanced HTML reports with IP address column and filtering
+- **NEW**: IP address coverage statistics and metrics
+- **NEW**: "Show With IP" filter button for quick IP address analysis
+- **NEW**: Smart IP address sorting in HTML reports
+- **NEW**: IP address data in all output formats (HTML, CSV, JSON, Excel)
+- **Enhanced**: Statistics now include IP address coverage percentages
+- **Enhanced**: Telegram notifications include IP address coverage info
+- **Enhanced**: Database tracking includes IP address metrics
+
 ### Version 2.1
 - Added configurable Python execution for multi-version environments
 - Enhanced HTML reports with real-time filtering and Material Design icons
@@ -369,3 +396,25 @@ For issues and questions:
 - Basic Mist API integration
 - HTML and CSV report generation
 - Command line interface
+
+## Business Value
+
+### Network Visibility
+- **Complete endpoint inventory** with User MACs and active NAC clients
+- **IP address tracking** for network troubleshooting and planning
+- **Connection type analysis** (wireless vs wired)
+- **Authentication compliance** monitoring
+
+### Operational Efficiency
+- **Automated reporting** with Telegram notifications
+- **Historical trending** for capacity planning
+- **Security monitoring** for rogue device detection
+- **Multi-format outputs** for different stakeholders
+
+### Network Security
+- **Device accountability** with MAC and IP correlation
+- **Authentication monitoring** with policy rule tracking
+- **Change detection** for unexpected network modifications
+- **Compliance reporting** for security audits
+
+This enhanced system now provides comprehensive network endpoint visibility including IP address tracking, making it an essential tool for network administrators, security teams, and IT operations.

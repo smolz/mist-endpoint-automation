@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Enhanced Mist Endpoint Report Generator
+Enhanced Mist Endpoint Report Generator - Updated with IP Address Support
 
 This script:
 1. Pulls all User MACs from the Mist API
 2. Pulls NAC Clients data for the last N days (configurable)
-3. Combines the data to create a comprehensive endpoint report
+3. Combines the data to create a comprehensive endpoint report including IP addresses
 4. Outputs the results to HTML, CSV, JSON, and Excel formats
 5. Supports configuration files and enhanced filtering
 6. Supports encrypted configuration files
@@ -77,6 +77,18 @@ def format_timestamp(timestamp: Optional[float]) -> str:
         return dt.strftime("%b %d, %Y %I:%M:%S %p")
     except (ValueError, TypeError):
         return "Invalid Date"
+
+def format_ip_address(ip: Optional[str]) -> str:
+    """Format IP address with validation"""
+    if not ip:
+        return "Not Available"
+    
+    # Basic validation - could be enhanced further
+    ip = str(ip).strip()
+    if ip and ip != "0.0.0.0" and ip != "None":
+        return ip
+    
+    return "Not Available"
 
 def load_config(config_file: str = None) -> Dict:
     """Load configuration from file (with encryption support)"""
@@ -174,14 +186,14 @@ def create_sample_config():
     with open(config_path, 'w') as f:
         config.write(f)
     
-    print(f"📁 Created sample configuration file: {config_path}")
+    print(f"📝 Created sample configuration file: {config_path}")
     print("   Edit this file with your credentials, then optionally encrypt it:")
     print(f"   python3 config_encryption.py --encrypt {config_path}")
 
 def parse_command_line_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(
-        description='Generate Enhanced Mist Endpoint Report',
+        description='Generate Enhanced Mist Endpoint Report with IP Address Support',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -212,7 +224,7 @@ def get_user_input():
     """Get API token and organization ID from user input"""
     import getpass
     
-    print("📧 Mist API Configuration")
+    print("🔧 Mist API Configuration")
     print("=" * 50)
     print()
     
@@ -413,7 +425,7 @@ class MistAPIClient:
         
         if connection_type:
             params['type'] = connection_type
-            print(f"📌 Filtering by connection type: {connection_type}")
+            print(f"🔌 Filtering by connection type: {connection_type}")
         
         return self._make_request('nac_clients/search', params)
 
@@ -450,6 +462,7 @@ def generate_statistics(df: pd.DataFrame) -> Dict:
     total_devices = len(df)
     never_seen = len(df[df['Last Seen'] == 'Never'])
     with_auth_rules = len(df[df['Matched Auth Policy Rule'] != 'Not Available'])
+    with_ip_addresses = len(df[df['Last IP Address'] != 'Not Available'])
     
     # Safe value counting for categorical data
     def safe_value_counts(series):
@@ -460,11 +473,13 @@ def generate_statistics(df: pd.DataFrame) -> Dict:
         'active_last_24h': active_24h,
         'active_last_7d': active_7d,
         'never_seen': never_seen,
+        'with_ip_addresses': with_ip_addresses,
         'by_auth_type': safe_value_counts(df['Auth Type']),
         'by_site': safe_value_counts(df['Site']),
         'by_connection_type': safe_value_counts(df['Connection Type']),
         'with_auth_rules': with_auth_rules,
-        'compliance_rate': (with_auth_rules / total_devices * 100) if total_devices > 0 else 0
+        'compliance_rate': (with_auth_rules / total_devices * 100) if total_devices > 0 else 0,
+        'ip_address_coverage': (with_ip_addresses / total_devices * 100) if total_devices > 0 else 0
     }
     
     return stats
@@ -473,7 +488,7 @@ def generate_statistics(df: pd.DataFrame) -> Dict:
 def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_lookup: Dict[str, str]) -> pd.DataFrame:
     """Create the endpoint report by combining user MACs and NAC clients data"""
     
-    print(f"📁 Processing {len(user_macs)} user MACs and {len(nac_clients)} NAC client records...")
+    print(f"📝 Processing {len(user_macs)} user MACs and {len(nac_clients)} NAC client records...")
     
     # Create initial endpoint report from user MACs
     endpoint_data = []
@@ -493,6 +508,7 @@ def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_
             'Labels': ', '.join(labels) if labels else '',
             'Description': description,
             'Last Seen': 'Never',
+            'Last IP Address': 'Not Available',
             'Site': 'Unknown',
             'Connection Type': 'Unknown',
             'SSID/Port': 'Not Available',
@@ -511,6 +527,7 @@ def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_
         timestamp = client.get('timestamp')
         auth_rule = client.get('last_nacrule_name', '')
         client_type = client.get('type', 'unknown')
+        last_ip = client.get('last_ip', '')  # NEW: Capture IP address
         
         if not device_mac:
             continue
@@ -524,10 +541,11 @@ def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_
                 'ssid': client.get('last_ssid', '') if client_type == 'wireless' else '',
                 'port_id': client.get('last_port_id', '') if client_type == 'wired' else '',
                 'auth_type': client.get('auth_type', ''),
-                'site_id': client.get('site_id', '')
+                'site_id': client.get('site_id', ''),
+                'last_ip': last_ip  # NEW: Store IP address
             }
     
-    print(f"📁 Unique NAC client MACs: {len(nac_lookup)}")
+    print(f"📝 Unique NAC client MACs: {len(nac_lookup)}")
     
     # Update the endpoint report with NAC client data
     matches_found = 0
@@ -537,6 +555,7 @@ def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_
         if mac_address in nac_lookup:
             nac_data = nac_lookup[mac_address]
             df.at[idx, 'Last Seen'] = format_timestamp(nac_data['timestamp'])
+            df.at[idx, 'Last IP Address'] = format_ip_address(nac_data['last_ip'])  # NEW: Set IP address
             df.at[idx, 'Connection Type'] = nac_data['type'].title()
             df.at[idx, 'Auth Type'] = nac_data['auth_type'].upper() if nac_data['auth_type'] else 'Unknown'
             df.at[idx, 'Matched Auth Policy Rule'] = nac_data['auth_rule'] or 'No Rule Matched'
@@ -608,7 +627,7 @@ def export_to_json(df: pd.DataFrame, filename: str, stats: Dict):
         'metadata': {
             'generated_at': datetime.now().isoformat(),
             'total_records': len(df),
-            'report_type': 'mist_endpoint_report'
+            'report_type': 'mist_endpoint_report_with_ip'
         },
         'statistics': clean_stats,
         'endpoints': endpoints_data
@@ -633,6 +652,8 @@ def export_to_excel(df: pd.DataFrame, filename: str, stats: Dict):
                 ['Active Last 24h', stats['active_last_24h']],
                 ['Active Last 7d', stats['active_last_7d']],
                 ['Never Seen', stats['never_seen']],
+                ['With IP Addresses', stats['with_ip_addresses']],
+                ['IP Address Coverage (%)', f"{stats['ip_address_coverage']:.1f}"],
                 ['With Auth Rules', stats['with_auth_rules']],
                 ['Compliance Rate (%)', f"{stats['compliance_rate']:.1f}"]
             ], columns=['Metric', 'Value'])
@@ -662,7 +683,7 @@ def export_to_excel(df: pd.DataFrame, filename: str, stats: Dict):
 
 def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_report.html', 
                         color_theme: str = 'default', stats: Dict = None):
-    """Generate an enhanced HTML report with advanced filtering and statistics"""
+    """Generate an enhanced HTML report with advanced filtering and statistics including IP addresses"""
     
     # Define color themes
     themes = {
@@ -682,14 +703,15 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('<head>\n')
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
-        f.write('<title>Enhanced Mist Endpoint Report</title>\n')
+        f.write('<title>Enhanced Mist Endpoint Report with IP Addresses</title>\n')
         f.write('<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">\n')
         f.write('<style>\n')
         f.write('body { font-family: Arial, sans-serif; margin: 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }\n')
-        f.write('.container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n')
+        f.write('.container { max-width: 1600px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n')
         f.write('.material-symbols-outlined { vertical-align: middle; margin-right: 6px; font-size: 18px; }\n')
         f.write('.connection-wired { color: #1565c0; }\n')
         f.write('.connection-wireless { color: #2e7d32; }\n')
+        f.write('.ip-address { font-family: "Courier New", monospace; font-weight: bold; color: #1976d2; }\n')
         f.write('h1 { color: #333; text-align: center; margin-bottom: 10px; }\n')
         f.write('.subtitle { text-align: center; color: #666; margin-bottom: 20px; }\n')
         f.write('.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }\n')
@@ -744,12 +766,29 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('    if (bText.includes("Never") && !aText.includes("Never")) return isAscending ? -1 : 1;\n')
         f.write('    if (aText.includes("Never") && bText.includes("Never")) return 0;\n')
         f.write('    \n')
-        f.write('    if (columnIndex === 4) {\n')  # Last Seen column
+        f.write('    if (columnIndex === 5) {\n')  # Last Seen column
         f.write('      const aDate = new Date(aText.replace(/[🟢🟡❌❓]/g, "").trim());\n')
         f.write('      const bDate = new Date(bText.replace(/[🟢🟡❌❓]/g, "").trim());\n')
         f.write('      if (!isNaN(aDate) && !isNaN(bDate)) {\n')
         f.write('        return isAscending ? aDate - bDate : bDate - aDate;\n')
         f.write('      }\n')
+        f.write('    }\n')
+        f.write('    \n')
+        f.write('    // Special handling for IP addresses\n')
+        f.write('    if (columnIndex === 6) {\n')  # IP Address column
+        f.write('      if (aText === "Not Available" && bText !== "Not Available") return isAscending ? 1 : -1;\n')
+        f.write('      if (bText === "Not Available" && aText !== "Not Available") return isAscending ? -1 : 1;\n')
+        f.write('      if (aText === "Not Available" && bText === "Not Available") return 0;\n')
+        f.write('      \n')
+        f.write('      // Try to sort IP addresses numerically\n')
+        f.write('      const aIP = aText.split(".").map(num => parseInt(num) || 0);\n')
+        f.write('      const bIP = bText.split(".").map(num => parseInt(num) || 0);\n')
+        f.write('      for (let i = 0; i < 4; i++) {\n')
+        f.write('        if (aIP[i] !== bIP[i]) {\n')
+        f.write('          return isAscending ? aIP[i] - bIP[i] : bIP[i] - aIP[i];\n')
+        f.write('        }\n')
+        f.write('      }\n')
+        f.write('      return 0;\n')
         f.write('    }\n')
         f.write('    \n')
         f.write('    const result = aText.localeCompare(bText, undefined, {numeric: true});\n')
@@ -814,9 +853,22 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('  const rows = tbody.querySelectorAll("tr");\n')
         f.write('  \n')
         f.write('  rows.forEach(row => {\n')
-        f.write('    const lastSeenCell = row.cells[4];\n')
+        f.write('    const lastSeenCell = row.cells[5];\n')  # Adjusted for IP column
         f.write('    const isNeverSeen = lastSeenCell.textContent.includes("Never");\n')
         f.write('    row.style.display = isNeverSeen ? "" : "none";\n')
+        f.write('  });\n')
+        f.write('  \n')
+        f.write('  updateFilterStats();\n')
+        f.write('}\n\n')
+        
+        f.write('function showOnlyWithIP() {\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  const rows = tbody.querySelectorAll("tr");\n')
+        f.write('  \n')
+        f.write('  rows.forEach(row => {\n')
+        f.write('    const ipCell = row.cells[6];\n')  # IP Address column
+        f.write('    const hasIP = !ipCell.textContent.includes("Not Available");\n')
+        f.write('    row.style.display = hasIP ? "" : "none";\n')
         f.write('  });\n')
         f.write('  \n')
         f.write('  updateFilterStats();\n')
@@ -842,7 +894,7 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('</head>\n')
         f.write('<body>\n')
         f.write('<div class="container">\n')
-        f.write('<h1>🌐 Enhanced Mist Endpoint Report</h1>\n')
+        f.write('<h1>🌐 Enhanced Mist Endpoint Report with IP Addresses</h1>\n')
         f.write(f'<div class="subtitle">Generated on {datetime.now().strftime("%B %d, %Y at %I:%M:%S %p")} - Theme: {color_theme.title()}</div>\n')
         
         # Add statistics cards if available
@@ -852,6 +904,8 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["active_last_24h"]}</div><div class="stat-label">Active Last 24h</div></div>\n')
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["active_last_7d"]}</div><div class="stat-label">Active Last 7d</div></div>\n')
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["never_seen"]}</div><div class="stat-label">Never Seen</div></div>\n')
+            f.write(f'<div class="stat-card"><div class="stat-number">{stats["with_ip_addresses"]}</div><div class="stat-label">With IP Address</div></div>\n')
+            f.write(f'<div class="stat-card"><div class="stat-number">{stats["ip_address_coverage"]:.1f}%</div><div class="stat-label">IP Coverage</div></div>\n')
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["with_auth_rules"]}</div><div class="stat-label">With Auth Rules</div></div>\n')
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["compliance_rate"]:.1f}%</div><div class="stat-label">Compliance Rate</div></div>\n')
             f.write('</div>\n')
@@ -860,6 +914,7 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('<div class="controls">\n')
         f.write('<button class="download-btn" onclick="downloadCSV()">📥 Download Filtered CSV</button>\n')
         f.write('<button class="download-btn" onclick="showOnlyNeverSeen()">👻 Show Never Seen</button>\n')
+        f.write('<button class="download-btn" onclick="showOnlyWithIP()">🌐 Show With IP</button>\n')
         f.write('<button class="download-btn" onclick="showAll()">🔄 Show All</button>\n')
         f.write('<input type="text" id="tableFilter" class="filter-input" placeholder="🔍 Filter endpoints..." onkeyup="filterTable()">\n')
         f.write('<span id="filterStats" style="margin-left: 10px; color: #666;"></span>\n')
@@ -872,12 +927,13 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('<th onclick="sortTable(1)">MAC Address</th>\n')
         f.write('<th onclick="sortTable(2)">Labels</th>\n')
         f.write('<th onclick="sortTable(3)">Description</th>\n')
-        f.write('<th onclick="sortTable(4)">Last Seen</th>\n')
-        f.write('<th onclick="sortTable(5)">Auth Type</th>\n')
-        f.write('<th onclick="sortTable(6)">Site</th>\n')
+        f.write('<th onclick="sortTable(4)">Site</th>\n')
+        f.write('<th onclick="sortTable(5)">Last Seen</th>\n')
+        f.write('<th onclick="sortTable(6)">Last IP Address</th>\n')  # NEW: IP Address column
         f.write('<th onclick="sortTable(7)">Connection Type</th>\n')
         f.write('<th onclick="sortTable(8)">SSID/Port</th>\n')
-        f.write('<th onclick="sortTable(9)">Matched Auth Policy Rule</th>\n')
+        f.write('<th onclick="sortTable(9)">Auth Type</th>\n')
+        f.write('<th onclick="sortTable(10)">Matched Auth Policy Rule</th>\n')
         f.write('</tr>\n')
         f.write('</thead>\n')
         f.write('<tbody>\n')
@@ -891,6 +947,7 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
             f.write(f'<td>{row["MAC Address"]}</td>\n')
             f.write(f'<td>{row["Labels"]}</td>\n')
             f.write(f'<td>{row["Description"] or "No description"}</td>\n')
+            f.write(f'<td>🏢 {row["Site"]}</td>\n')
             
             # Enhanced Last Seen with activity indicators
             last_seen = row['Last Seen']
@@ -911,8 +968,13 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
                     activity_icon = '❓'
             
             f.write(f'<td {last_seen_class}>{activity_icon} {last_seen}</td>\n')
-            f.write(f'<td>{row["Auth Type"]}</td>\n')
-            f.write(f'<td>🏢 {row["Site"]}</td>\n')
+            
+            # NEW: IP Address column with special formatting
+            ip_address = row["Last IP Address"]
+            if ip_address == "Not Available":
+                f.write(f'<td style="color: #666; font-style: italic;">{ip_address}</td>\n')
+            else:
+                f.write(f'<td class="ip-address">🌐 {ip_address}</td>\n')
             
             # Add icons for connection types
             conn_type = row["Connection Type"]
@@ -925,6 +987,7 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
             
             f.write(f'<td>{conn_display}</td>\n')
             f.write(f'<td>{row["SSID/Port"]}</td>\n')
+            f.write(f'<td>{row["Auth Type"]}</td>\n')
             f.write(f'<td>{row["Matched Auth Policy Rule"]}</td>\n')
             f.write('</tr>\n')
         
@@ -935,29 +998,33 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         if stats:
             f.write('<div class="performance-info">\n')
             f.write('<h3>📊 Report Details</h3>\n')
-            f.write('<p><strong>Coverage:</strong> User MACs database and NAC client activity</p>\n')
+            f.write('<p><strong>Coverage:</strong> User MACs database and NAC client activity with IP address tracking</p>\n')
             f.write('<p><strong>Activity Indicators:</strong> 🟢 Active (24h) | 🟡 Older | ❌ Never Seen | <span class="material-symbols-outlined connection-wireless">wifi</span> Wireless | <span class="material-symbols-outlined connection-wired">lan</span> Wired</p>\n')
+            f.write('<p><strong>IP Address Coverage:</strong> Shows last known IP address for devices that have connected</p>\n')
             
             # Connection type breakdown
             conn_types = stats.get('by_connection_type', {})
             conn_summary = ' | '.join([f'{k.title()}: {v}' for k, v in conn_types.items()])
-            f.write(f'<p><strong>Connection Types:</strong> {conn_summary} | </p>\n')
+            f.write(f'<p><strong>Connection Types:</strong> {conn_summary}</p>\n')
             
             # Top sites breakdown  
             sites = stats.get('by_site', {})
             top_sites = sorted(sites.items(), key=lambda x: x[1], reverse=True)[:5]
             sites_summary = ' | '.join([f'{k}: {v}' for k, v in top_sites])
-            f.write(f'<p><strong>Top Sites:</strong> {sites_summary} | </p>\n')
+            f.write(f'<p><strong>Top Sites:</strong> {sites_summary}</p>\n')
+            
+            # IP address statistics
+            f.write(f'<p><strong>IP Address Statistics:</strong> {stats["with_ip_addresses"]} devices have IP addresses ({stats["ip_address_coverage"]:.1f}% coverage)</p>\n')
             f.write('</div>\n')
         
         f.write('</div>\n')
         f.write('</body>\n')
         f.write('</html>\n')
     
-    print(f"📄 Enhanced HTML report generated: {output_file}")
+    print(f"📄 Enhanced HTML report with IP addresses generated: {output_file}")
 
 def main():
-    """Main function to run the enhanced endpoint report generation"""
+    """Main function to run the enhanced endpoint report generation with IP address support"""
     
     # Parse command line arguments
     args = parse_command_line_args()
@@ -1045,7 +1112,7 @@ def main():
         THEME = args.theme
         DAYS = args.days
     
-    print("🚀 Starting Enhanced Mist Endpoint Report Generation...")
+    print("🚀 Starting Enhanced Mist Endpoint Report Generation with IP Address Support...")
     print(f"📊 Organization ID: {ORG_ID}")
     print(f"🌐 API Endpoint: {BASE_URL}")
     print(f"🎨 Theme: {THEME}")
@@ -1053,7 +1120,7 @@ def main():
     if args.site:
         print(f"🏢 Site filter: {args.site}")
     if args.connection_type:
-        print(f"📌 Connection type filter: {args.connection_type}")
+        print(f"🔌 Connection type filter: {args.connection_type}")
     print()
     
     # Parse output formats
@@ -1087,7 +1154,7 @@ def main():
         print()
         
         # Step 4: Create combined report
-        print("📄 Step 4: Creating endpoint report...")
+        print("📄 Step 4: Creating endpoint report with IP address data...")
         df = create_endpoint_report(user_macs, nac_clients, site_lookup)
         print(f"✅ Created report with {len(df)} endpoints")
         print()
@@ -1104,31 +1171,32 @@ def main():
         print(f"📁 Reports directory: {reports_dir}")
         
         # Step 7: Generate reports in requested formats
-        print("📄 Step 7: Generating enhanced reports...")
+        print("📄 Step 7: Generating enhanced reports with IP address support...")
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         for output_format in output_formats:
             if output_format == 'html':
-                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.html"
+                output_file = reports_dir / f"mist_endpoint_report_with_ip_{timestamp}.html"
                 generate_html_report(df, str(output_file), THEME, stats)
             elif output_format == 'csv':
-                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.csv"
+                output_file = reports_dir / f"mist_endpoint_report_with_ip_{timestamp}.csv"
                 export_to_csv(df, str(output_file))
             elif output_format == 'json':
-                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.json"
+                output_file = reports_dir / f"mist_endpoint_report_with_ip_{timestamp}.json"
                 export_to_json(df, str(output_file), stats)
             elif output_format == 'excel':
-                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.xlsx"
+                output_file = reports_dir / f"mist_endpoint_report_with_ip_{timestamp}.xlsx"
                 export_to_excel(df, str(output_file), stats)
             else:
                 print(f"⚠️ Unknown format: {output_format}")
         
         print()
         
-        # Enhanced Summary with performance metrics
+        # Enhanced Summary with performance metrics including IP address data
         total_endpoints = len(df)
         active_endpoints = stats['active_last_7d']
         with_auth_rules = stats['with_auth_rules']
+        with_ip_addresses = stats['with_ip_addresses']
         wireless_devices = stats['by_connection_type'].get('Wireless', 0)
         wired_devices = stats['by_connection_type'].get('Wired', 0)
         
@@ -1137,6 +1205,8 @@ def main():
         print(f"   Active (24h): {stats['active_last_24h']}")
         print(f"   Active (7d): {active_endpoints}")
         print(f"   Never Seen: {stats['never_seen']}")
+        print(f"   With IP Addresses: {with_ip_addresses}")
+        print(f"   IP Address Coverage: {stats['ip_address_coverage']:.1f}%")
         print(f"   With Auth Rules: {with_auth_rules}")
         print(f"   Wireless Devices: {wireless_devices}")
         print(f"   Wired Devices: {wired_devices}")
@@ -1149,8 +1219,9 @@ def main():
             print(f"   Top Sites: {', '.join([f'{site}: {count}' for site, count in top_sites])}")
         
         print()
-        print(f"✅ Enhanced report generation completed!")
+        print(f"✅ Enhanced report generation with IP address support completed!")
         print(f"📁 Reports saved in: {reports_dir}/")
+        print(f"🌐 New feature: IP address tracking provides network visibility")
         
     except KeyboardInterrupt:
         print("\n⚠️ Report generation interrupted by user")
