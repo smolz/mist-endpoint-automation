@@ -9,15 +9,18 @@ A comprehensive automation system for generating Mist endpoint reports with Tele
 - **Configuration Encryption**: Secure storage of API tokens and sensitive configuration
 - **Telegram Notifications**: Automated notifications for report success, failures, and changes
 - **Historical Tracking**: SQLite database for tracking report history and system health
+- **Configurable Python Execution**: Support for multiple Python versions and environments
 - **Scheduling Support**: Built-in scheduling for automated report generation
 - **Advanced Filtering**: Filter reports by site, connection type, and date ranges
-- **Interactive HTML Reports**: Sortable tables with statistics dashboard
+- **Interactive HTML Reports**: Sortable tables with statistics dashboard and real-time filtering
 
 ## Requirements
 
 ```bash
-pip install requests pandas openpyxl configparser cryptography python-telegram-bot schedule
+pip3 install requests pandas openpyxl configparser cryptography python-telegram-bot schedule
 ```
+
+> **Note for Windows Users:** On Windows, you may need to use `python` instead of `python3` and `pip` instead of `pip3` in all commands.
 
 ## Project Structure
 
@@ -42,8 +45,8 @@ pip install requests pandas openpyxl configparser cryptography python-telegram-b
 Create sample configuration files:
 
 ```bash
-python3.13 mist_automation.py --setup
-python3.13 mist_endpoint_report.py --create-config
+python3 mist_automation.py --setup
+python3 mist_endpoint_report.py --create-config
 ```
 
 ### 2. Configure API Credentials
@@ -59,20 +62,20 @@ Edit the generated configuration files with your Mist API credentials:
 
 ```bash
 # Create encryption key
-python3.13 mist_automation.py --create-key
+python3 mist_automation.py --create-key
 
 # Encrypt configuration files
-python3.13 mist_automation.py --encrypt-configs
+python3 mist_automation.py --encrypt-configs
 ```
 
 ### 4. Test Integration
 
 ```bash
 # Test Telegram notifications
-python3.13 mist_automation.py --test-telegram
+python3 mist_automation.py --test-telegram
 
 # Generate a test report
-python3.13 mist_automation.py --run
+python3 mist_automation.py --run
 ```
 
 ## Usage
@@ -81,39 +84,42 @@ python3.13 mist_automation.py --run
 
 ```bash
 # Generate report with default settings
-python3.13 mist_endpoint_report.py
+python3 mist_endpoint_report.py
 
 # Generate report with command line options
-python3.13 mist_endpoint_report.py --days 14 --theme sunset --format html,csv,json
+python3 mist_endpoint_report.py --days 14 --theme sunset --format html,csv,json
 
 # Filter by site or connection type
-python3.13 mist_endpoint_report.py --site SITE_ID --connection-type wireless
+python3 mist_endpoint_report.py --site SITE_ID --connection-type wireless
 ```
 
 ### Automation Features
 
 ```bash
 # Run single report with automation features
-python3.13 mist_automation.py --run
+python3 mist_automation.py --run
 
 # View system health
-python3.13 mist_automation.py --health
+python3 mist_automation.py --health
 
 # Manual cleanup of old files
-python3.13 mist_automation.py --cleanup
+python3 mist_automation.py --cleanup
+
+# Use specific Python version (especially useful on macOS)
+python3 mist_automation.py --python python3.13 --run
 ```
 
 ### Configuration Management
 
 ```bash
 # Encrypt existing configurations
-python3.13 mist_automation.py --encrypt-configs
+python3 mist_automation.py --encrypt-configs
 
 # Decrypt for editing (remember to re-encrypt!)
-python3.13 mist_automation.py --decrypt-configs
+python3 mist_automation.py --decrypt-configs
 
 # Create new encryption key
-python3.13 mist_automation.py --create-key
+python3 mist_automation.py --create-key
 ```
 
 ## Configuration Files
@@ -142,6 +148,7 @@ send_change_alerts = true
 [mist]
 script_path = ./mist_endpoint_report.py
 config_path = Resources/mist_config.ini
+python_executable = python3
 output_formats = html,json
 theme = default
 
@@ -159,6 +166,37 @@ daily_time = 06:00
 cleanup_time = 02:00
 ```
 
+## Python Version Configuration
+
+The system supports configurable Python execution, essential for environments with multiple Python versions (especially macOS):
+
+### Configuration Methods (in order of priority):
+
+1. **Command Line Override**:
+   ```bash
+   python3 mist_automation.py --python python3.13 --run
+   ```
+
+2. **Environment Variable**:
+   ```bash
+   export MIST_PYTHON_EXECUTABLE=python3.13
+   python3 mist_automation.py --run
+   ```
+
+3. **Configuration File**:
+   ```ini
+   [mist]
+   python_executable = python3.13
+   ```
+
+4. **Auto-Detection**: System automatically detects best available Python
+
+### Platform-Specific Notes:
+
+- **macOS**: Often requires specific version (e.g., `python3.13`)
+- **Linux**: Usually `python3` works fine
+- **Windows**: May need `python` instead of `python3`
+
 ## Report Themes
 
 Available themes for HTML reports:
@@ -172,10 +210,21 @@ Available themes for HTML reports:
 
 ## Output Formats
 
-- **HTML**: Interactive web report with sorting and statistics
+- **HTML**: Interactive web report with sorting, filtering, and statistics
 - **CSV**: Raw data for spreadsheet analysis
 - **JSON**: Structured data with metadata and statistics
 - **Excel**: Multi-sheet workbook with data and breakdowns
+
+## Enhanced HTML Features
+
+The HTML reports now include:
+
+- **Real-time search filtering**: Find devices instantly
+- **Quick filter buttons**: "Show Never Seen", "Show All"
+- **Filter statistics**: Shows "X of Y endpoints" 
+- **Enhanced CSV download**: Exports only filtered results
+- **Material Design Icons**: Professional network-specific icons
+- **Performance info section**: Detailed statistics and breakdowns
 
 ## Security Features
 
@@ -185,7 +234,7 @@ The project supports two encryption methods:
 
 1. **Key File Based** (Recommended for automation)
    ```bash
-   python3.13 mist_automation.py --create-key
+   python3 mist_automation.py --create-key
    ```
 
 2. **Password Based** (Interactive use)
@@ -233,7 +282,7 @@ The SQLite database tracks:
 Optional environment variables:
 
 - `MIST_CONFIG_PASSWORD`: Password for encrypted configs
-- Configure in your shell or automation system
+- `MIST_PYTHON_EXECUTABLE`: Python executable to use for scripts
 
 ## Development
 
@@ -261,12 +310,18 @@ The system includes built-in rate limiting:
 - Check organization ID format (UUID)
 
 **Encryption Errors**
-- Ensure cryptography library is installed: `pip install cryptography`
+- Ensure cryptography library is installed: `pip3 install cryptography`
 - Verify encryption key file exists and is readable
 
 **Telegram Errors**
 - Test bot connection with `--test-telegram`
 - Verify bot token and chat ID are correct
+
+**Python Version Issues**
+- Configure specific Python version in `automation_config.ini`
+- Use `--python` command line override for testing
+- Set `MIST_PYTHON_EXECUTABLE` environment variable
+- On macOS, specify exact Python version (e.g., `python3.13`)
 
 **Missing Data**
 - Check date range (--days parameter)
@@ -294,6 +349,13 @@ For issues and questions:
 4. Test individual components separately
 
 ## Changelog
+
+### Version 2.1
+- Added configurable Python execution for multi-version environments
+- Enhanced HTML reports with real-time filtering and Material Design icons
+- Improved macOS compatibility with Python version detection
+- Added environment variable support for Python executable
+- Better error handling and user feedback
 
 ### Version 2.0
 - Added configuration encryption

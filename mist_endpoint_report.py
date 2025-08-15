@@ -9,16 +9,17 @@ This script:
 4. Outputs the results to HTML, CSV, JSON, and Excel formats
 5. Supports configuration files and enhanced filtering
 6. Supports encrypted configuration files
+7. Enhanced HTML reports with filtering, search, and statistics
 
 Requirements:
-pip install requests pandas openpyxl configparser cryptography
+pip3 install requests pandas openpyxl configparser cryptography
 
 Usage:
-python mist_endpoint_report.py
-python mist_endpoint_report.py --token YOUR_TOKEN --org-id YOUR_ORG_ID
-python mist_endpoint_report.py --days 14 --theme sunset --format html,csv
-python mist_endpoint_report.py --config Resources/mist_config.ini
-python mist_endpoint_report.py --encrypt-config
+python3 mist_endpoint_report.py
+python3 mist_endpoint_report.py --token YOUR_TOKEN --org-id YOUR_ORG_ID
+python3 mist_endpoint_report.py --days 14 --theme sunset --format html,csv
+python3 mist_endpoint_report.py --config Resources/mist_config.ini
+python3 mist_endpoint_report.py --encrypt-config
 """
 
 import requests
@@ -32,6 +33,7 @@ import os
 import configparser
 from typing import List, Dict, Optional
 from functools import wraps
+from pathlib import Path
 
 # Import encryption module
 try:
@@ -80,30 +82,30 @@ def load_config(config_file: str = None) -> Dict:
     """Load configuration from file (with encryption support)"""
     # Default to Resources directory if no path specified
     if config_file is None:
-        config_file = os.path.join("Resources", "mist_config.ini")
-    elif not os.path.dirname(config_file):  # If no directory specified
-        config_file = os.path.join("Resources", config_file)
+        config_file = Path("Resources") / "mist_config.ini"
+    elif not Path(config_file).parent.name:  # If no directory specified
+        config_file = Path("Resources") / config_file
     
     # Check if this is an encrypted file
-    if config_file.endswith('.enc'):
+    if str(config_file).endswith('.enc'):
         return load_encrypted_config(config_file)
     
     # Try encrypted version first if regular file requested
-    encrypted_file = config_file + '.enc'
-    if os.path.exists(encrypted_file):
+    encrypted_file = Path(str(config_file) + '.enc')
+    if encrypted_file.exists():
         return load_encrypted_config(encrypted_file)
     
     # Try regular config files
     config_files = [config_file]
-    if config_file != os.path.join("Resources", "mist_config.ini"):
-        config_files.append(os.path.join("Resources", "mist_config.ini"))
-    config_files.extend(['mist_config.ini', 'config.ini'])  # Legacy fallbacks
+    if config_file != Path("Resources") / "mist_config.ini":
+        config_files.append(Path("Resources") / "mist_config.ini")
+    config_files.extend([Path('mist_config.ini'), Path('config.ini')])  # Legacy fallbacks
     
     config = configparser.ConfigParser()
     config_data = {}
     
     for conf_file in config_files:
-        if os.path.exists(conf_file):
+        if conf_file.exists():
             print(f"📋 Loading configuration from: {conf_file}")
             config.read(conf_file)
             if 'mist' in config:
@@ -118,22 +120,22 @@ def load_config(config_file: str = None) -> Dict:
     
     return config_data
 
-def load_encrypted_config(encrypted_file: str) -> Dict:
+def load_encrypted_config(encrypted_file: Path) -> Dict:
     """Load encrypted configuration file"""
     if not ENCRYPTION_AVAILABLE:
-        raise ImportError("Encryption not available. Install cryptography: pip3.13 install cryptography")
+        raise ImportError("Encryption not available. Install cryptography: pip3 install cryptography")
     
     try:
         # Check for key file
-        key_file = os.path.join("Resources", "encryption.key")
-        if os.path.exists(key_file):
+        key_file = Path("Resources") / "encryption.key"
+        if key_file.exists():
             print("🔑 Using encryption key file")
-            encryptor = ConfigEncryption(key_file=key_file)
+            encryptor = ConfigEncryption(key_file=str(key_file))
         else:
             print("🔐 Using password-based encryption")
             encryptor = ConfigEncryption()
         
-        config = encryptor.load_encrypted_config(encrypted_file)
+        config = encryptor.load_encrypted_config(str(encrypted_file))
         
         print(f"🔓 Loaded encrypted configuration from: {encrypted_file}")
         
@@ -155,10 +157,9 @@ def load_encrypted_config(encrypted_file: str) -> Dict:
 def create_sample_config():
     """Create a sample configuration file"""
     # Ensure Resources directory exists
-    resources_dir = "Resources"
-    if not os.path.exists(resources_dir):
-        os.makedirs(resources_dir)
-        print(f"📁 Created directory: {resources_dir}")
+    resources_dir = Path("Resources")
+    resources_dir.mkdir(exist_ok=True)
+    print(f"📁 Created directory: {resources_dir}")
     
     config = configparser.ConfigParser()
     config['mist'] = {
@@ -169,13 +170,13 @@ def create_sample_config():
         'days': '7'
     }
     
-    config_path = os.path.join(resources_dir, 'mist_config.ini')
+    config_path = resources_dir / 'mist_config.ini'
     with open(config_path, 'w') as f:
         config.write(f)
     
-    print(f"📝 Created sample configuration file: {config_path}")
+    print(f"📁 Created sample configuration file: {config_path}")
     print("   Edit this file with your credentials, then optionally encrypt it:")
-    print(f"   python3.13 config_encryption.py --encrypt {config_path}")
+    print(f"   python3 config_encryption.py --encrypt {config_path}")
 
 def parse_command_line_args():
     """Parse command line arguments"""
@@ -211,7 +212,7 @@ def get_user_input():
     """Get API token and organization ID from user input"""
     import getpass
     
-    print("🔧 Mist API Configuration")
+    print("📧 Mist API Configuration")
     print("=" * 50)
     print()
     
@@ -412,7 +413,7 @@ class MistAPIClient:
         
         if connection_type:
             params['type'] = connection_type
-            print(f"🔌 Filtering by connection type: {connection_type}")
+            print(f"📌 Filtering by connection type: {connection_type}")
         
         return self._make_request('nac_clients/search', params)
 
@@ -472,7 +473,7 @@ def generate_statistics(df: pd.DataFrame) -> Dict:
 def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_lookup: Dict[str, str]) -> pd.DataFrame:
     """Create the endpoint report by combining user MACs and NAC clients data"""
     
-    print(f"🔍 Processing {len(user_macs)} user MACs and {len(nac_clients)} NAC client records...")
+    print(f"📁 Processing {len(user_macs)} user MACs and {len(nac_clients)} NAC client records...")
     
     # Create initial endpoint report from user MACs
     endpoint_data = []
@@ -526,7 +527,7 @@ def create_endpoint_report(user_macs: List[Dict], nac_clients: List[Dict], site_
                 'site_id': client.get('site_id', '')
             }
     
-    print(f"🔍 Unique NAC client MACs: {len(nac_lookup)}")
+    print(f"📁 Unique NAC client MACs: {len(nac_lookup)}")
     
     # Update the endpoint report with NAC client data
     matches_found = 0
@@ -656,12 +657,12 @@ def export_to_excel(df: pd.DataFrame, filename: str, stats: Dict):
         print(f"📄 Excel report generated: {filename}")
         
     except ImportError:
-        print("⚠️ openpyxl not installed. Install with: pip install openpyxl")
+        print("⚠️ openpyxl not installed. Install with: pip3 install openpyxl")
         print("   Skipping Excel export...")
 
 def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_report.html', 
                         color_theme: str = 'default', stats: Dict = None):
-    """Generate an HTML report from the DataFrame with enhanced statistics"""
+    """Generate an enhanced HTML report with advanced filtering and statistics"""
     
     # Define color themes
     themes = {
@@ -682,9 +683,13 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('<meta charset="UTF-8">\n')
         f.write('<meta name="viewport" content="width=device-width, initial-scale=1.0">\n')
         f.write('<title>Enhanced Mist Endpoint Report</title>\n')
+        f.write('<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">\n')
         f.write('<style>\n')
         f.write('body { font-family: Arial, sans-serif; margin: 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }\n')
         f.write('.container { max-width: 1400px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }\n')
+        f.write('.material-symbols-outlined { vertical-align: middle; margin-right: 6px; font-size: 18px; }\n')
+        f.write('.connection-wired { color: #1565c0; }\n')
+        f.write('.connection-wireless { color: #2e7d32; }\n')
         f.write('h1 { color: #333; text-align: center; margin-bottom: 10px; }\n')
         f.write('.subtitle { text-align: center; color: #666; margin-bottom: 20px; }\n')
         f.write('.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }\n')
@@ -705,10 +710,18 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write(f'.download-btn:hover {{ background: {colors["accent"]}; transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }}\n')
         f.write('.controls { margin: 20px 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }\n')
         f.write('.filter-input { padding: 8px; border-radius: 4px; border: 1px solid #ddd; min-width: 200px; }\n')
+        f.write('.performance-info { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ' + colors["bg"] + '; }\n')
         f.write('</style>\n')
         
-        # Add JavaScript for enhanced functionality
+        # Add enhanced JavaScript functionality
         f.write('<script>\n')
+        f.write('let originalRows = [];\n\n')
+        
+        f.write('function initializeTable() {\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  originalRows = Array.from(tbody.querySelectorAll("tr"));\n')
+        f.write('}\n\n')
+        
         f.write('function sortTable(columnIndex) {\n')
         f.write('  const table = document.querySelector("table");\n')
         f.write('  const tbody = table.querySelector("tbody");\n')
@@ -727,13 +740,13 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('    const aText = a.cells[columnIndex].textContent.trim();\n')
         f.write('    const bText = b.cells[columnIndex].textContent.trim();\n')
         f.write('    \n')
-        f.write('    if (aText === "Never" && bText !== "Never") return isAscending ? 1 : -1;\n')
-        f.write('    if (bText === "Never" && aText !== "Never") return isAscending ? -1 : 1;\n')
-        f.write('    if (aText === "Never" && bText === "Never") return 0;\n')
+        f.write('    if (aText.includes("Never") && !bText.includes("Never")) return isAscending ? 1 : -1;\n')
+        f.write('    if (bText.includes("Never") && !aText.includes("Never")) return isAscending ? -1 : 1;\n')
+        f.write('    if (aText.includes("Never") && bText.includes("Never")) return 0;\n')
         f.write('    \n')
         f.write('    if (columnIndex === 4) {\n')  # Last Seen column
-        f.write('      const aDate = new Date(aText);\n')
-        f.write('      const bDate = new Date(bText);\n')
+        f.write('      const aDate = new Date(aText.replace(/[🟢🟡❌❓]/g, "").trim());\n')
+        f.write('      const bDate = new Date(bText.replace(/[🟢🟡❌❓]/g, "").trim());\n')
         f.write('      if (!isNaN(aDate) && !isNaN(bDate)) {\n')
         f.write('        return isAscending ? aDate - bDate : bDate - aDate;\n')
         f.write('      }\n')
@@ -744,24 +757,46 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('  });\n')
         f.write('  \n')
         f.write('  rows.forEach(row => tbody.appendChild(row));\n')
-        f.write('}\n')
-        f.write('\n')
+        f.write('}\n\n')
+        
+        f.write('function filterTable() {\n')
+        f.write('  const filterValue = document.getElementById("tableFilter").value.toLowerCase();\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  const rows = tbody.querySelectorAll("tr");\n')
+        f.write('  \n')
+        f.write('  rows.forEach(row => {\n')
+        f.write('    const text = row.textContent.toLowerCase();\n')
+        f.write('    row.style.display = text.includes(filterValue) ? "" : "none";\n')
+        f.write('  });\n')
+        f.write('  \n')
+        f.write('  updateFilterStats();\n')
+        f.write('}\n\n')
+        
+        f.write('function updateFilterStats() {\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  const visibleRows = tbody.querySelectorAll("tr:not([style*=\\"display: none\\"])").length;\n')
+        f.write('  const totalRows = tbody.querySelectorAll("tr").length;\n')
+        f.write('  document.getElementById("filterStats").textContent = `Showing ${visibleRows} of ${totalRows} endpoints`;\n')
+        f.write('}\n\n')
+        
         f.write('function downloadCSV() {\n')
         f.write('  const table = document.querySelector("table");\n')
         f.write('  const rows = table.querySelectorAll("tr");\n')
         f.write('  let csv = "";\n')
         f.write('  rows.forEach(row => {\n')
-        f.write('    const cells = row.querySelectorAll("th, td");\n')
-        f.write('    const rowData = [];\n')
-        f.write('    cells.forEach(cell => {\n')
-        f.write('      let cellText = cell.textContent.trim();\n')
-        f.write('      cellText = cellText.replace(/[🔶🔌❓🏢]/g, "").trim();\n')
-        f.write('      if (cellText.includes(",")) {\n')
-        f.write('        cellText = "\\"" + cellText.replace(/"/g, "\\"\\"") + "\\"";\n')
-        f.write('      }\n')
-        f.write('      rowData.push(cellText);\n')
-        f.write('    });\n')
-        f.write('    csv += rowData.join(",") + "\\n";\n')
+        f.write('    if (row.style.display !== "none") {\n')
+        f.write('      const cells = row.querySelectorAll("th, td");\n')
+        f.write('      const rowData = [];\n')
+        f.write('      cells.forEach(cell => {\n')
+        f.write('        let cellText = cell.textContent.trim();\n')
+        f.write('        cellText = cellText.replace(/[🟢🟡❌❓]/g, "").trim();\n')
+        f.write('        if (cellText.includes(",")) {\n')
+        f.write('          cellText = "\\"" + cellText.replace(/"/g, "\\"\\"") + "\\"";\n')
+        f.write('        }\n')
+        f.write('        rowData.push(cellText);\n')
+        f.write('      });\n')
+        f.write('      csv += rowData.join(",") + "\\n";\n')
+        f.write('    }\n')
         f.write('  });\n')
         f.write('  const blob = new Blob([csv], { type: "text/csv" });\n')
         f.write('  const url = window.URL.createObjectURL(blob);\n')
@@ -772,7 +807,37 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
         f.write('  a.click();\n')
         f.write('  document.body.removeChild(a);\n')
         f.write('  window.URL.revokeObjectURL(url);\n')
-        f.write('}\n')
+        f.write('}\n\n')
+        
+        f.write('function showOnlyNeverSeen() {\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  const rows = tbody.querySelectorAll("tr");\n')
+        f.write('  \n')
+        f.write('  rows.forEach(row => {\n')
+        f.write('    const lastSeenCell = row.cells[4];\n')
+        f.write('    const isNeverSeen = lastSeenCell.textContent.includes("Never");\n')
+        f.write('    row.style.display = isNeverSeen ? "" : "none";\n')
+        f.write('  });\n')
+        f.write('  \n')
+        f.write('  updateFilterStats();\n')
+        f.write('}\n\n')
+        
+        f.write('function showAll() {\n')
+        f.write('  const tbody = document.querySelector("tbody");\n')
+        f.write('  const rows = tbody.querySelectorAll("tr");\n')
+        f.write('  \n')
+        f.write('  rows.forEach(row => {\n')
+        f.write('    row.style.display = "";\n')
+        f.write('  });\n')
+        f.write('  \n')
+        f.write('  document.getElementById("tableFilter").value = "";\n')
+        f.write('  updateFilterStats();\n')
+        f.write('}\n\n')
+        
+        f.write('window.onload = function() {\n')
+        f.write('  initializeTable();\n')
+        f.write('  updateFilterStats();\n')
+        f.write('};\n')
         f.write('</script>\n')
         f.write('</head>\n')
         f.write('<body>\n')
@@ -791,9 +856,13 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
             f.write(f'<div class="stat-card"><div class="stat-number">{stats["compliance_rate"]:.1f}%</div><div class="stat-label">Compliance Rate</div></div>\n')
             f.write('</div>\n')
         
-        # Add controls
+        # Add enhanced controls with filtering
         f.write('<div class="controls">\n')
-        f.write('<button class="download-btn" onclick="downloadCSV()">📥 Download CSV</button>\n')
+        f.write('<button class="download-btn" onclick="downloadCSV()">📥 Download Filtered CSV</button>\n')
+        f.write('<button class="download-btn" onclick="showOnlyNeverSeen()">👻 Show Never Seen</button>\n')
+        f.write('<button class="download-btn" onclick="showAll()">🔄 Show All</button>\n')
+        f.write('<input type="text" id="tableFilter" class="filter-input" placeholder="🔍 Filter endpoints..." onkeyup="filterTable()">\n')
+        f.write('<span id="filterStats" style="margin-left: 10px; color: #666;"></span>\n')
         f.write('</div>\n')
         
         f.write('<table>\n')
@@ -848,25 +917,44 @@ def generate_html_report(df: pd.DataFrame, output_file: str = 'mist_endpoint_rep
             # Add icons for connection types
             conn_type = row["Connection Type"]
             if conn_type.lower() == 'wireless':
-                conn_icon = '📶'
+                conn_display = f'<span class="material-symbols-outlined connection-wireless">wifi</span>{conn_type}'
             elif conn_type.lower() == 'wired':
-                conn_icon = '🔌'
+                conn_display = f'<span class="material-symbols-outlined connection-wired">lan</span>{conn_type}'
             else:
-                conn_icon = '❓'
+                conn_display = f'❓ {conn_type}'
             
-            f.write(f'<td>{conn_icon} {conn_type}</td>\n')
+            f.write(f'<td>{conn_display}</td>\n')
             f.write(f'<td>{row["SSID/Port"]}</td>\n')
             f.write(f'<td>{row["Matched Auth Policy Rule"]}</td>\n')
             f.write('</tr>\n')
         
         f.write('</tbody>\n')
         f.write('</table>\n')
-        f.write('<p>Report covers User MACs database and NAC client activity from the last 7 days</p>\n')
+        
+        # Add performance info section
+        if stats:
+            f.write('<div class="performance-info">\n')
+            f.write('<h3>📊 Report Details</h3>\n')
+            f.write('<p><strong>Coverage:</strong> User MACs database and NAC client activity</p>\n')
+            f.write('<p><strong>Activity Indicators:</strong> 🟢 Active (24h) | 🟡 Older | ❌ Never Seen | <span class="material-symbols-outlined connection-wireless">wifi</span> Wireless | <span class="material-symbols-outlined connection-wired">lan</span> Wired</p>\n')
+            
+            # Connection type breakdown
+            conn_types = stats.get('by_connection_type', {})
+            conn_summary = ' | '.join([f'{k.title()}: {v}' for k, v in conn_types.items()])
+            f.write(f'<p><strong>Connection Types:</strong> {conn_summary} | </p>\n')
+            
+            # Top sites breakdown  
+            sites = stats.get('by_site', {})
+            top_sites = sorted(sites.items(), key=lambda x: x[1], reverse=True)[:5]
+            sites_summary = ' | '.join([f'{k}: {v}' for k, v in top_sites])
+            f.write(f'<p><strong>Top Sites:</strong> {sites_summary} | </p>\n')
+            f.write('</div>\n')
+        
         f.write('</div>\n')
         f.write('</body>\n')
         f.write('</html>\n')
     
-    print(f"📄 HTML report generated: {output_file}")
+    print(f"📄 Enhanced HTML report generated: {output_file}")
 
 def main():
     """Main function to run the enhanced endpoint report generation"""
@@ -881,24 +969,24 @@ def main():
     
     if args.encrypt_config:
         if not ENCRYPTION_AVAILABLE:
-            print("❌ Encryption not available. Install cryptography: pip3.13 install cryptography")
+            print("❌ Encryption not available. Install cryptography: pip3 install cryptography")
             sys.exit(1)
         
-        config_file = os.path.join("Resources", "mist_config.ini")
-        if not os.path.exists(config_file):
+        config_file = Path("Resources") / "mist_config.ini"
+        if not config_file.exists():
             print(f"❌ Configuration file not found: {config_file}")
-            print("   Create it first with: python3.13 mist_endpoint_report.py --create-config")
+            print("   Create it first with: python3 mist_endpoint_report.py --create-config")
             sys.exit(1)
         
         # Check for key file
-        key_file = os.path.join("Resources", "encryption.key")
-        if os.path.exists(key_file):
-            encryptor = ConfigEncryption(key_file=key_file)
+        key_file = Path("Resources") / "encryption.key"
+        if key_file.exists():
+            encryptor = ConfigEncryption(key_file=str(key_file))
         else:
             encryptor = ConfigEncryption()
         
         try:
-            encryptor.encrypt_config_file(config_file)
+            encryptor.encrypt_config_file(str(config_file))
             print("✅ Configuration encrypted successfully!")
         except Exception as e:
             print(f"❌ Encryption failed: {e}")
@@ -907,23 +995,23 @@ def main():
     
     if args.decrypt_config:
         if not ENCRYPTION_AVAILABLE:
-            print("❌ Encryption not available. Install cryptography: pip3.13 install cryptography")
+            print("❌ Encryption not available. Install cryptography: pip3 install cryptography")
             sys.exit(1)
         
-        encrypted_file = os.path.join("Resources", "mist_config.ini.enc")
-        if not os.path.exists(encrypted_file):
+        encrypted_file = Path("Resources") / "mist_config.ini.enc"
+        if not encrypted_file.exists():
             print(f"❌ Encrypted configuration file not found: {encrypted_file}")
             sys.exit(1)
         
         # Check for key file
-        key_file = os.path.join("Resources", "encryption.key")
-        if os.path.exists(key_file):
-            encryptor = ConfigEncryption(key_file=key_file)
+        key_file = Path("Resources") / "encryption.key"
+        if key_file.exists():
+            encryptor = ConfigEncryption(key_file=str(key_file))
         else:
             encryptor = ConfigEncryption()
         
         try:
-            encryptor.decrypt_config_file(encrypted_file)
+            encryptor.decrypt_config_file(str(encrypted_file))
             print("✅ Configuration decrypted successfully!")
             print("⚠️ Remember to re-encrypt after editing!")
         except Exception as e:
@@ -965,7 +1053,7 @@ def main():
     if args.site:
         print(f"🏢 Site filter: {args.site}")
     if args.connection_type:
-        print(f"🔌 Connection type filter: {args.connection_type}")
+        print(f"📌 Connection type filter: {args.connection_type}")
     print()
     
     # Parse output formats
@@ -1011,28 +1099,27 @@ def main():
         print()
         
         # Step 6: Create Reports directory
-        reports_dir = "Reports"
-        if not os.path.exists(reports_dir):
-            os.makedirs(reports_dir)
-            print(f"📁 Created directory: {reports_dir}")
+        reports_dir = Path("Reports")
+        reports_dir.mkdir(exist_ok=True)
+        print(f"📁 Reports directory: {reports_dir}")
         
         # Step 7: Generate reports in requested formats
-        print("📄 Step 6: Generating reports...")
+        print("📄 Step 7: Generating enhanced reports...")
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         for output_format in output_formats:
             if output_format == 'html':
-                output_file = os.path.join(reports_dir, f"mist_endpoint_report_{timestamp}.html")
-                generate_html_report(df, output_file, THEME, stats)
+                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.html"
+                generate_html_report(df, str(output_file), THEME, stats)
             elif output_format == 'csv':
-                output_file = os.path.join(reports_dir, f"mist_endpoint_report_{timestamp}.csv")
-                export_to_csv(df, output_file)
+                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.csv"
+                export_to_csv(df, str(output_file))
             elif output_format == 'json':
-                output_file = os.path.join(reports_dir, f"mist_endpoint_report_{timestamp}.json")
-                export_to_json(df, output_file, stats)
+                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.json"
+                export_to_json(df, str(output_file), stats)
             elif output_format == 'excel':
-                output_file = os.path.join(reports_dir, f"mist_endpoint_report_{timestamp}.xlsx")
-                export_to_excel(df, output_file, stats)
+                output_file = reports_dir / f"mist_endpoint_report_{timestamp}.xlsx"
+                export_to_excel(df, str(output_file), stats)
             else:
                 print(f"⚠️ Unknown format: {output_format}")
         
@@ -1042,8 +1129,8 @@ def main():
         total_endpoints = len(df)
         active_endpoints = stats['active_last_7d']
         with_auth_rules = stats['with_auth_rules']
-        wireless_devices = stats['by_connection_type'].get('wireless', 0)
-        wired_devices = stats['by_connection_type'].get('wired', 0)
+        wireless_devices = stats['by_connection_type'].get('Wireless', 0)
+        wired_devices = stats['by_connection_type'].get('Wired', 0)
         
         print("📊 Enhanced Report Summary:")
         print(f"   Total Endpoints: {total_endpoints}")

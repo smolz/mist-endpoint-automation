@@ -11,14 +11,14 @@ This wrapper script provides:
 - Configuration file encryption
 
 Requirements:
-pip install requests pandas python-telegram-bot configparser schedule cryptography
+pip3 install requests pandas python-telegram-bot configparser schedule cryptography
 
 Usage:
-python mist_automation.py --setup              # Initial configuration
-python mist_automation.py --run                # Single run with notifications
-python mist_automation.py --encrypt-configs    # Encrypt configuration files
-python mist_automation.py --test-telegram      # Test Telegram integration
-python mist_automation.py --schedule           # Run as daemon with scheduling
+python3 mist_automation.py --setup              # Initial configuration
+python3 mist_automation.py --run                # Single run with notifications
+python3 mist_automation.py --encrypt-configs    # Encrypt configuration files
+python3 mist_automation.py --test-telegram      # Test Telegram integration
+python3 mist_automation.py --schedule           # Run as daemon with scheduling
 """
 
 import os
@@ -27,17 +27,18 @@ import json
 import argparse
 import configparser
 import sqlite3
+import shutil
+import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+import subprocess
+import logging
 import requests
 import pandas as pd
 import schedule
 import time
 import traceback
-import hashlib
-from typing import Dict, List, Optional, Tuple
-import subprocess
-import logging
 
 # Import encryption module
 try:
@@ -45,16 +46,15 @@ try:
     ENCRYPTION_AVAILABLE = True
 except ImportError:
     ENCRYPTION_AVAILABLE = False
-    print("⚠️ Warning: Encryption module not available. Install cryptography: pip3.13 install cryptography")
+    logging.warning("Encryption module not available. Install cryptography: pip3 install cryptography")
 
 # Setup logging with organized folder structure
 def setup_logging():
     """Setup logging with proper directory structure"""
-    logs_dir = "Logs"
-    if not os.path.exists(logs_dir):
-        os.makedirs(logs_dir)
+    logs_dir = Path("Logs")
+    logs_dir.mkdir(exist_ok=True)
     
-    log_file = os.path.join(logs_dir, 'mist_automation.log')
+    log_file = logs_dir / 'mist_automation.log'
     
     logging.basicConfig(
         level=logging.INFO,
@@ -90,6 +90,7 @@ class TelegramNotifier:
             
             response = requests.post(url, data=data, timeout=10)
             response.raise_for_status()
+            logger.info("✅ Telegram message sent successfully")
             return True
             
         except Exception as e:
@@ -119,14 +120,13 @@ class TelegramNotifier:
 class HistoricalTracker:
     """Track historical data and changes"""
     
-    def __init__(self, db_path: str = None):
+    def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
-            resources_dir = "Resources"
-            if not os.path.exists(resources_dir):
-                os.makedirs(resources_dir)
-            db_path = os.path.join(resources_dir, "mist_history.db")
+            resources_dir = Path("Resources")
+            resources_dir.mkdir(exist_ok=True)
+            db_path = resources_dir / "mist_history.db"
         
-        self.db_path = db_path
+        self.db_path = Path(db_path)
         self.init_database()
     
     def init_database(self):
@@ -171,7 +171,7 @@ class HistoricalTracker:
             logger.error(f"❌ Database initialization failed: {e}")
             raise
     
-    def store_report(self, stats: Dict, file_path: str, report_hash: str, success: bool, duration: float = None):
+    def store_report(self, stats: Dict, file_path: str, report_hash: str, success: bool, duration: Optional[float] = None):
         """Store report metadata in database"""
         try:
             conn = sqlite3.connect(self.db_path)
@@ -193,15 +193,34 @@ class HistoricalTracker:
                 stats.get('by_connection_type', {}).get('wireless', 0),
                 stats.get('by_connection_type', {}).get('wired', 0),
                 report_hash,
-                file_path,
+                str(file_path),
                 success
             ))
             
             conn.commit()
             conn.close()
+            logger.debug("📝 Report data stored in database")
             
         except Exception as e:
             logger.error(f"❌ Failed to store report data: {e}")
+    
+    def log_health_event(self, status: str, duration: float, error_msg: Optional[str] = None, details: Optional[str] = None):
+        """Log health event to database"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO health_log (timestamp, status, duration_seconds, error_message, details)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (datetime.now().isoformat(), status, duration, error_msg, details))
+            
+            conn.commit()
+            conn.close()
+            logger.debug(f"📈 Health event logged: {status}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to log health event: {e}")
     
     def get_last_report(self) -> Optional[Dict]:
         """Get the last successful report data"""
@@ -261,45 +280,101 @@ class HistoricalTracker:
 class MistAutomation:
     """Main automation controller"""
     
-    def __init__(self, config_file: str = None):
+    def __init__(self, config_file: Optional[str] = None, python_executable: Optional[str] = None):
         self.setup_directories()
         
         if config_file is None:
-            config_file = os.path.join("Resources", "automation_config.ini")
-        elif not os.path.dirname(config_file):
-            config_file = os.path.join("Resources", config_file)
+            config_file = Path("Resources") / "automation_config.ini"
+        elif not Path(config_file).parent.name:
+            config_file = Path("Resources") / config_file
         
-        self.config_file = config_file
+        self.config_file = Path(config_file)
         self.config = self.load_config()
+        
+        # Set up Python executable
+        self.python_executable = python_executable or self._get_python_executable()
         
         # Initialize components
         self.telegram = None
-        if self.config.get('telegram', {}).get('bot_token'):
+        telegram_config = self.config.get('telegram', {})
+        if telegram_config.get('bot_token') and telegram_config.get('chat_id'):
             self.telegram = TelegramNotifier(
-                self.config['telegram']['bot_token'],
-                self.config['telegram']['chat_id']
+                telegram_config['bot_token'],
+                telegram_config['chat_id']
             )
         
+        # Set up database
         db_path = self.config.get('database', {}).get('path')
-        if db_path and not os.path.dirname(db_path):
-            db_path = os.path.join("Resources", db_path)
+        if db_path and not Path(db_path).parent.name:
+            db_path = Path("Resources") / db_path
         
         self.tracker = HistoricalTracker(db_path)
+        
+        # Set up paths
         self.mist_script = self.config.get('mist', {}).get('script_path', './mist_endpoint_report.py')
-        self.reports_dir = self.config.get('reports', {}).get('directory', 'Reports')
+        self.reports_dir = Path(self.config.get('reports', {}).get('directory', 'Reports'))
     
     def setup_directories(self):
         """Create necessary directories if they don't exist"""
-        directories = ['Resources', 'Logs', 'Reports']
+        directories = [Path('Resources'), Path('Logs'), Path('Reports')]
         for directory in directories:
-            if not os.path.exists(directory):
-                os.makedirs(directory)
+            directory.mkdir(exist_ok=True)
+    
+    def _get_python_executable(self) -> str:
+        """Get Python executable with multiple override options"""
+        
+        # 1. Environment variable (highest priority)
+        env_python = os.environ.get('MIST_PYTHON_EXECUTABLE')
+        if env_python and shutil.which(env_python):
+            logger.info(f"🐍 Using Python from MIST_PYTHON_EXECUTABLE: {env_python}")
+            return env_python
+        
+        # 2. Configuration file
+        config_python = self.config.get('mist', {}).get('python_executable')
+        if config_python and shutil.which(config_python):
+            logger.info(f"🐍 Using Python from config: {config_python}")
+            return config_python
+        
+        # 3. Auto-detection
+        detected = self._detect_python_executable()
+        logger.info(f"🐍 Auto-detected Python: {detected}")
+        return detected
+    
+    def _detect_python_executable(self) -> str:
+        """Auto-detect the best Python executable"""
+        
+        # Current interpreter is usually the best choice
+        current = sys.executable
+        if current and shutil.which(current):
+            return current
+        
+        # Platform-specific detection
+        if sys.platform == "darwin":  # macOS
+            candidates = ['python3.13', 'python3.12', 'python3.11', 'python3']
+        elif sys.platform.startswith("win"):  # Windows
+            candidates = ['python', 'python3', 'py']
+        else:  # Linux/Unix
+            candidates = ['python3', 'python']
+        
+        for candidate in candidates:
+            if shutil.which(candidate):
+                try:
+                    # Quick version check
+                    result = subprocess.run([candidate, '--version'], 
+                                          capture_output=True, text=True, timeout=3)
+                    if result.returncode == 0 and 'Python 3.' in result.stdout:
+                        return candidate
+                except Exception:
+                    continue
+        
+        # Last resort
+        return 'python3'
     
     def load_config(self) -> Dict:
         """Load configuration from file (with encryption support)"""
-        if not os.path.exists(self.config_file):
-            encrypted_file = self.config_file + '.enc'
-            if os.path.exists(encrypted_file):
+        if not self.config_file.exists():
+            encrypted_file = self.config_file.with_suffix('.ini.enc')
+            if encrypted_file.exists():
                 return self.load_encrypted_config(encrypted_file)
             else:
                 logger.warning(f"⚠️ Config file not found: {self.config_file}")
@@ -312,21 +387,22 @@ class MistAutomation:
         for section in config.sections():
             result[section] = dict(config[section])
         
+        logger.info(f"📋 Loaded configuration from: {self.config_file}")
         return result
     
-    def load_encrypted_config(self, encrypted_file: str) -> Dict:
+    def load_encrypted_config(self, encrypted_file: Path) -> Dict:
         """Load encrypted configuration file"""
         if not ENCRYPTION_AVAILABLE:
-            raise ImportError("Encryption not available. Install cryptography: pip3.13 install cryptography")
+            raise ImportError("Encryption not available. Install cryptography: pip3 install cryptography")
         
         try:
-            key_file = os.path.join("Resources", "encryption.key")
-            if os.path.exists(key_file):
-                encryptor = ConfigEncryption(key_file=key_file)
+            key_file = Path("Resources") / "encryption.key"
+            if key_file.exists():
+                encryptor = ConfigEncryption(key_file=str(key_file))
             else:
                 encryptor = ConfigEncryption()
             
-            config = encryptor.load_encrypted_config(encrypted_file)
+            config = encryptor.load_encrypted_config(str(encrypted_file))
             
             result = {}
             for section in config.sections():
@@ -341,9 +417,8 @@ class MistAutomation:
     
     def create_sample_config(self):
         """Create a sample configuration file"""
-        resources_dir = "Resources"
-        if not os.path.exists(resources_dir):
-            os.makedirs(resources_dir)
+        resources_dir = Path("Resources")
+        resources_dir.mkdir(exist_ok=True)
         
         config = configparser.ConfigParser()
         
@@ -358,6 +433,7 @@ class MistAutomation:
         config['mist'] = {
             'script_path': './mist_endpoint_report.py',
             'config_path': 'Resources/mist_config.ini',
+            'python_executable': 'python3',
             'output_formats': 'html,json',
             'theme': 'default'
         }
@@ -378,21 +454,23 @@ class MistAutomation:
             'cleanup_time': '02:00'
         }
         
-        config_path = os.path.join(resources_dir, "automation_config.ini")
+        config_path = resources_dir / "automation_config.ini"
         with open(config_path, 'w') as f:
             config.write(f)
         
-        print(f"\n🔧 Configuration file created: {config_path}")
+        print(f"\n📧 Configuration file created: {config_path}")
         print("📝 Please edit this file with your actual values:")
         print("   1. Get Telegram bot token from @BotFather")
         print("   2. Get your chat ID from @userinfobot")
         print("   3. Update paths and preferences")
-        print("   4. Run: python3.13 mist_automation.py --test-telegram")
+        print("   4. Run: python3 mist_automation.py --test-telegram")
+        logger.info(f"Sample configuration created: {config_path}")
     
     def test_telegram(self) -> bool:
         """Test Telegram integration"""
         if not self.telegram:
             print("❌ Telegram not configured")
+            logger.warning("Telegram not configured")
             return False
         
         if not self.telegram.test_connection():
@@ -413,10 +491,27 @@ class MistAutomation:
         success = self.telegram.send_message(test_message)
         if success:
             print("✅ Telegram test successful! Check your chat for the test message.")
+            logger.info("Telegram test completed successfully")
         else:
             print("❌ Telegram test failed. Check your bot token and chat ID.")
+            logger.error("Telegram test failed")
         
         return success
+    
+    def calculate_report_hash(self, report_file: str) -> str:
+        """Calculate hash of report file contents for change detection"""
+        try:
+            if not os.path.exists(report_file):
+                return ""
+            
+            hasher = hashlib.sha256()
+            with open(report_file, 'rb') as f:
+                for chunk in iter(lambda: f.read(4096), b""):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+        except Exception as e:
+            logger.error(f"Failed to calculate report hash: {e}")
+            return str(time.time())  # Fallback to timestamp
     
     def run_mist_report(self) -> Tuple[bool, Dict, str, float]:
         """Run the Mist endpoint report script"""
@@ -427,18 +522,19 @@ class MistAutomation:
             mist_config_path = self.config.get('mist', {}).get('config_path', 'Resources/mist_config.ini')
             
             # Check if encrypted version exists and use it
-            if os.path.exists(mist_config_path + '.enc'):
+            if Path(mist_config_path + '.enc').exists():
                 mist_config_path = mist_config_path + '.enc'
-            elif not os.path.exists(mist_config_path):
+            elif not Path(mist_config_path).exists():
                 # Try default locations
-                if os.path.exists('Resources/mist_config.ini.enc'):
+                if Path('Resources/mist_config.ini.enc').exists():
                     mist_config_path = 'Resources/mist_config.ini.enc'
-                elif os.path.exists('Resources/mist_config.ini'):
+                elif Path('Resources/mist_config.ini').exists():
                     mist_config_path = 'Resources/mist_config.ini'
             
-            # Build command
+            # Build command with configurable Python
             cmd = [
-                'python3.13', self.mist_script,
+                self.python_executable,  # Use configurable Python
+                self.mist_script,
                 '--config', mist_config_path,
                 '--format', self.config.get('mist', {}).get('output_formats', 'html,csv').replace(' ', ''),
                 '--theme', self.config.get('mist', {}).get('theme', 'default')
@@ -483,10 +579,8 @@ class MistAutomation:
     def extract_latest_stats(self) -> Dict:
         """Extract statistics from the latest report files"""
         try:
-            reports_path = Path(self.reports_dir)
-            
             # First try JSON files
-            json_files = list(reports_path.glob("mist_endpoint_report_*.json"))
+            json_files = list(self.reports_dir.glob("mist_endpoint_report_*.json"))
             if json_files:
                 latest_json = max(json_files, key=lambda x: x.stat().st_mtime)
                 with open(latest_json, 'r') as f:
@@ -494,7 +588,7 @@ class MistAutomation:
                     return data.get('statistics', {})
             
             # Fallback to CSV files
-            csv_files = list(reports_path.glob("mist_endpoint_report_*.csv"))
+            csv_files = list(self.reports_dir.glob("mist_endpoint_report_*.csv"))
             if csv_files:
                 latest_csv = max(csv_files, key=lambda x: x.stat().st_mtime)
                 return self.extract_stats_from_csv(latest_csv)
@@ -515,7 +609,7 @@ class MistAutomation:
             never_seen = len(df[df['Last Seen'] == 'Never'])
             with_auth_rules = len(df[df['Matched Auth Policy Rule'] != 'Not Available'])
             
-            # Count connection types
+            # Count connection types safely
             connection_counts = df['Connection Type'].value_counts().to_dict()
             
             # Estimate active devices
@@ -544,8 +638,7 @@ class MistAutomation:
     def get_latest_report_file(self) -> str:
         """Get the path to the latest HTML report"""
         try:
-            reports_path = Path(self.reports_dir)
-            html_files = list(reports_path.glob("mist_endpoint_report_*.html"))
+            html_files = list(self.reports_dir.glob("mist_endpoint_report_*.html"))
             
             if not html_files:
                 return ""
@@ -575,39 +668,128 @@ class MistAutomation:
 🔹 Never Seen: {stats.get('never_seen', 0)}
 🔹 Compliance: {stats.get('compliance_rate', 0):.1f}%
 
-🔌 <b>Connection Types:</b>
+📌 <b>Connection Types:</b>
 🔹 Wireless: {stats.get('by_connection_type', {}).get('wireless', 0)}
 🔹 Wired: {stats.get('by_connection_type', {}).get('wired', 0)}
         """
         
         self.telegram.send_message(message)
     
+    def send_error_notification(self, error_msg: str, duration: float):
+        """Send error notification via Telegram"""
+        if not self.telegram or not self.config.get('telegram', {}).get('send_error_alerts', 'false').lower() == 'true':
+            return
+        
+        message = f"""
+❌ <b>Mist Endpoint Report - Failed</b>
+
+⏰ <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+⚡ <b>Duration:</b> {duration:.1f}s
+
+🔥 <b>Error:</b>
+<code>{error_msg}</code>
+
+Please check the logs for more details.
+        """
+        
+        self.telegram.send_message(message)
+    
+    def cleanup_old_files(self) -> Tuple[int, int, int]:
+        """Clean up old report files and database entries"""
+        # Clean up old report files
+        keep_days = int(self.config.get('reports', {}).get('keep_days', 30))
+        cleaned_files = 0
+        
+        if self.reports_dir.exists():
+            cutoff_date = datetime.now() - timedelta(days=keep_days)
+            
+            for file_path in self.reports_dir.glob("mist_endpoint_report_*"):
+                if file_path.stat().st_mtime < cutoff_date.timestamp():
+                    try:
+                        file_path.unlink()
+                        cleaned_files += 1
+                        logger.info(f"🗑️ Deleted old report: {file_path.name}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to delete {file_path.name}: {e}")
+        
+        # Clean up old database entries
+        db_keep_days = int(self.config.get('database', {}).get('keep_days', 90))
+        reports_deleted = 0
+        health_deleted = 0
+        
+        try:
+            conn = sqlite3.connect(self.tracker.db_path)
+            cursor = conn.cursor()
+            
+            cutoff_date = (datetime.now() - timedelta(days=db_keep_days)).isoformat()
+            
+            cursor.execute('DELETE FROM reports WHERE timestamp < ?', (cutoff_date,))
+            reports_deleted = cursor.rowcount
+            
+            cursor.execute('DELETE FROM health_log WHERE timestamp < ?', (cutoff_date,))
+            health_deleted = cursor.rowcount
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"🧹 Database cleanup: {reports_deleted} reports, {health_deleted} health logs")
+            
+        except Exception as e:
+            logger.error(f"❌ Database cleanup failed: {e}")
+        
+        return cleaned_files, reports_deleted, health_deleted
+    
     def run_single_report(self):
         """Run a single report with full automation features"""
+        start_time = time.time()
         logger.info("🚀 Starting automated Mist report generation...")
         
-        # Get previous report for comparison
-        previous_report = self.tracker.get_last_report()
-        
-        # Run the report
-        success, stats, report_file, duration = self.run_mist_report()
-        
-        # Calculate report hash for change detection
-        report_hash = str(time.time())  # Simple fallback
-        
-        # Store results
-        self.tracker.store_report(stats, report_file, report_hash, success, duration)
-        
-        if success:
-            # Send success notification
-            self.send_success_notification(stats, report_file, duration)
-            logger.info("✅ Automated report generation completed successfully")
-            print("✅ Mist report completed successfully!")
-        else:
-            logger.error("❌ Automated report generation failed")
-            print("❌ Mist report failed. Check logs for details.")
-        
-        return success
+        try:
+            # Get previous report for comparison
+            previous_report = self.tracker.get_last_report()
+            
+            # Run the report
+            success, stats, report_file, duration = self.run_mist_report()
+            
+            # Calculate report hash for change detection
+            report_hash = self.calculate_report_hash(report_file)
+            
+            # Log health event
+            self.tracker.log_health_event(
+                "success" if success else "failure", 
+                duration, 
+                None if success else "Report generation failed"
+            )
+            
+            # Store results
+            self.tracker.store_report(stats, report_file, report_hash, success, duration)
+            
+            if success:
+                # Send success notification
+                self.send_success_notification(stats, report_file, duration)
+                logger.info("✅ Automated report generation completed successfully")
+                print("✅ Mist report completed successfully!")
+            else:
+                # Send error notification
+                self.send_error_notification("Report generation failed", duration)
+                logger.error("❌ Automated report generation failed")
+                print("❌ Mist report failed. Check logs for details.")
+            
+            return success
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            error_msg = str(e)
+            
+            # Log health event for exception
+            self.tracker.log_health_event("failure", duration, error_msg)
+            
+            # Send error notification
+            self.send_error_notification(error_msg, duration)
+            
+            logger.error(f"❌ Automated report generation failed with exception: {e}")
+            print(f"❌ Mist report failed: {e}")
+            return False
 
 def parse_command_line_args():
     """Parse command line arguments"""
@@ -622,6 +804,8 @@ Examples:
   %(prog)s --encrypt-configs       # Encrypt configuration files
   %(prog)s --decrypt-configs       # Decrypt configuration files
   %(prog)s --create-key            # Create encryption key file
+  %(prog)s --cleanup               # Clean up old files
+  %(prog)s --health                # Show system health
         """
     )
     
@@ -632,6 +816,7 @@ Examples:
     parser.add_argument('--cleanup', action='store_true', help='Run manual cleanup of old files and database')
     parser.add_argument('--health', action='store_true', help='Show health summary')
     parser.add_argument('--config', help='Configuration file path (default: Resources/automation_config.ini)')
+    parser.add_argument('--python', help='Python executable to use for running scripts')
     parser.add_argument('--encrypt-configs', action='store_true', help='Encrypt existing configuration files')
     parser.add_argument('--decrypt-configs', action='store_true', help='Decrypt configuration files for editing')
     parser.add_argument('--create-key', action='store_true', help='Create encryption key file')
@@ -642,140 +827,187 @@ def main():
     """Main function"""
     args = parse_command_line_args()
     
-    automation = MistAutomation(args.config)
-    
     try:
         if args.setup:
+            automation = MistAutomation()
             automation.create_sample_config()
             
         elif args.create_key:
             if not ENCRYPTION_AVAILABLE:
-                print("❌ Encryption not available. Install cryptography: pip3.13 install cryptography")
+                print("❌ Encryption not available. Install cryptography: pip3 install cryptography")
+                logger.error("Encryption not available")
                 sys.exit(1)
             
-            key_file = os.path.join("Resources", "encryption.key")
+            key_file = Path("Resources") / "encryption.key"
             encryptor = ConfigEncryption()
-            encryptor.create_key_file(key_file)
+            encryptor.create_key_file(str(key_file))
             print("✅ Encryption key created successfully!")
+            logger.info("Encryption key created successfully")
             
         elif args.encrypt_configs:
             if not ENCRYPTION_AVAILABLE:
-                print("❌ Encryption not available. Install cryptography: pip3.13 install cryptography")
+                print("❌ Encryption not available. Install cryptography: pip3 install cryptography")
+                logger.error("Encryption not available")
                 sys.exit(1)
             
             config_files = [
-                os.path.join("Resources", "mist_config.ini"),
-                os.path.join("Resources", "automation_config.ini")
+                Path("Resources") / "mist_config.ini",
+                Path("Resources") / "automation_config.ini"
             ]
             
-            key_file = os.path.join("Resources", "encryption.key")
-            if os.path.exists(key_file):
+            key_file = Path("Resources") / "encryption.key"
+            if key_file.exists():
                 print("🔑 Using encryption key file")
-                encryptor = ConfigEncryption(key_file=key_file)
+                encryptor = ConfigEncryption(key_file=str(key_file))
             else:
                 print("🔐 Using password-based encryption")
                 encryptor = ConfigEncryption()
             
             encrypted_count = 0
             for config_file in config_files:
-                if os.path.exists(config_file):
+                if config_file.exists():
                     try:
                         print(f"🔒 Encrypting: {config_file}")
-                        encryptor.encrypt_config_file(config_file)
+                        encryptor.encrypt_config_file(str(config_file))
                         encrypted_count += 1
+                        logger.info(f"Encrypted configuration: {config_file}")
                     except Exception as e:
                         print(f"❌ Failed to encrypt {config_file}: {e}")
+                        logger.error(f"Failed to encrypt {config_file}: {e}")
                 else:
                     print(f"⚠️ Config file not found: {config_file}")
+                    logger.warning(f"Config file not found: {config_file}")
             
             if encrypted_count > 0:
                 print(f"✅ Encrypted {encrypted_count} configuration files")
+                logger.info(f"Encrypted {encrypted_count} configuration files")
             else:
                 print("❌ No configuration files were encrypted")
+                logger.warning("No configuration files were encrypted")
             
         elif args.decrypt_configs:
             if not ENCRYPTION_AVAILABLE:
-                print("❌ Encryption not available. Install cryptography: pip3.13 install cryptography")
+                print("❌ Encryption not available. Install cryptography: pip3 install cryptography")
+                logger.error("Encryption not available")
                 sys.exit(1)
             
             encrypted_files = [
-                os.path.join("Resources", "mist_config.ini.enc"),
-                os.path.join("Resources", "automation_config.ini.enc")
+                Path("Resources") / "mist_config.ini.enc",
+                Path("Resources") / "automation_config.ini.enc"
             ]
             
-            key_file = os.path.join("Resources", "encryption.key")
-            if os.path.exists(key_file):
+            key_file = Path("Resources") / "encryption.key"
+            if key_file.exists():
                 print("🔑 Using encryption key file")
-                encryptor = ConfigEncryption(key_file=key_file)
+                encryptor = ConfigEncryption(key_file=str(key_file))
             else:
                 print("🔐 Using password-based encryption")
                 encryptor = ConfigEncryption()
             
             decrypted_count = 0
             for encrypted_file in encrypted_files:
-                if os.path.exists(encrypted_file):
+                if encrypted_file.exists():
                     try:
                         print(f"🔓 Decrypting: {encrypted_file}")
-                        encryptor.decrypt_config_file(encrypted_file)
+                        encryptor.decrypt_config_file(str(encrypted_file))
                         decrypted_count += 1
+                        logger.info(f"Decrypted configuration: {encrypted_file}")
                     except Exception as e:
                         print(f"❌ Failed to decrypt {encrypted_file}: {e}")
+                        logger.error(f"Failed to decrypt {encrypted_file}: {e}")
                 else:
                     print(f"⚠️ Encrypted file not found: {encrypted_file}")
+                    logger.warning(f"Encrypted file not found: {encrypted_file}")
             
             if decrypted_count > 0:
                 print(f"✅ Decrypted {decrypted_count} configuration files")
                 print("⚠️ Remember to re-encrypt after editing!")
+                logger.info(f"Decrypted {decrypted_count} configuration files")
             else:
                 print("❌ No encrypted files were found to decrypt")
-            
-        elif args.test_telegram:
-            success = automation.test_telegram()
-            sys.exit(0 if success else 1)
-            
-        elif args.run:
-            success = automation.run_single_report()
-            sys.exit(0 if success else 1)
-            
-        elif args.health:
-            health_data = automation.tracker.get_health_summary(24)
-            
-            print("📊 Mist Automation Health Summary (24h)")
-            print("=" * 50)
-            
-            if health_data:
-                total_runs = sum(data['count'] for data in health_data.values())
-                success_runs = health_data.get('success', {}).get('count', 0)
-                failure_runs = health_data.get('failure', {}).get('count', 0)
-                avg_duration = health_data.get('success', {}).get('avg_duration', 0)
-                
-                success_rate = (success_runs / total_runs * 100) if total_runs > 0 else 0
-                
-                print(f"Total Runs: {total_runs}")
-                print(f"Success Rate: {success_rate:.1f}%")
-                print(f"Average Duration: {avg_duration:.1f}s")
-                print(f"Successful Runs: {success_runs}")
-                print(f"Failed Runs: {failure_runs}")
-                
-                if success_rate > 95:
-                    print("✅ System Status: Excellent")
-                elif success_rate > 90:
-                    print("🟡 System Status: Good")
-                elif success_rate > 75:
-                    print("🟠 System Status: Needs Attention")
-                else:
-                    print("🔴 System Status: Critical")
-            else:
-                print("No health data available for the last 24 hours")
-            
+                logger.warning("No encrypted files were found to decrypt")
+        
         else:
-            print("No action specified. Use --help for available options.")
+            # Initialize automation for other commands
+            automation = MistAutomation(args.config, args.python)
             
+            if args.test_telegram:
+                success = automation.test_telegram()
+                sys.exit(0 if success else 1)
+                
+            elif args.run:
+                success = automation.run_single_report()
+                sys.exit(0 if success else 1)
+                
+            elif args.cleanup:
+                logger.info("🧹 Starting manual cleanup...")
+                print("🧹 Starting cleanup...")
+                
+                cleaned_files, reports_deleted, health_deleted = automation.cleanup_old_files()
+                
+                print(f"✅ Cleaned up {cleaned_files} old report files")
+                print(f"✅ Cleaned up {reports_deleted} old report entries and {health_deleted} health log entries")
+                print("🎉 Cleanup completed!")
+                
+                logger.info(f"Cleanup completed: {cleaned_files} files, {reports_deleted} reports, {health_deleted} health logs")
+                
+            elif args.health:
+                health_data = automation.tracker.get_health_summary(24)
+                
+                print("📊 Mist Automation Health Summary (24h)")
+                print("=" * 50)
+                
+                if health_data:
+                    total_runs = sum(data['count'] for data in health_data.values())
+                    success_runs = health_data.get('success', {}).get('count', 0)
+                    failure_runs = health_data.get('failure', {}).get('count', 0)
+                    avg_duration = health_data.get('success', {}).get('avg_duration', 0)
+                    
+                    success_rate = (success_runs / total_runs * 100) if total_runs > 0 else 0
+                    
+                    print(f"Total Runs: {total_runs}")
+                    print(f"Success Rate: {success_rate:.1f}%")
+                    print(f"Average Duration: {avg_duration:.1f}s")
+                    print(f"Successful Runs: {success_runs}")
+                    print(f"Failed Runs: {failure_runs}")
+                    
+                    if success_rate > 95:
+                        print("✅ System Status: Excellent")
+                        status = "Excellent"
+                    elif success_rate > 90:
+                        print("🟡 System Status: Good")
+                        status = "Good"
+                    elif success_rate > 75:
+                        print("🟠 System Status: Needs Attention")
+                        status = "Needs Attention"
+                    else:
+                        print("🔴 System Status: Critical")
+                        status = "Critical"
+                    
+                    logger.info(f"Health check completed - Status: {status}, Success rate: {success_rate:.1f}%")
+                else:
+                    print("No health data available for the last 24 hours")
+                    logger.info("No health data available for the last 24 hours")
+                
+            elif args.schedule:
+                print("📅 Scheduling functionality would be implemented here")
+                print("💡 For now, use cron (Linux/macOS) or Task Scheduler (Windows)")
+                print("   Example cron entry:")
+                print(f"   0 6 * * * cd {Path.cwd()} && {automation.python_executable} mist_automation.py --run")
+                logger.info("Schedule command called - providing manual setup instructions")
+                
+            else:
+                print("No action specified. Use --help for available options.")
+                logger.warning("No action specified in command line arguments")
+                
     except KeyboardInterrupt:
         print("\n👋 Operation cancelled")
+        logger.info("Operation cancelled by user")
         sys.exit(1)
     except Exception as e:
         print(f"❌ Error: {e}")
+        logger.error(f"Unhandled exception: {e}")
+        logger.debug(traceback.format_exc())
         sys.exit(1)
 
 if __name__ == "__main__":
